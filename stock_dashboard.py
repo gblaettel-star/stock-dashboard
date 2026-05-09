@@ -789,7 +789,7 @@ styled = (big_moves.style
     .format({"Close ($)":"{:.2f}","Move (%)":"{:+.1f}",
              "+ 1 day (%)":"{:+.1f}","+ 5 days (%)":"{:+.1f}","+ 20 days (%)":"{:+.1f}"},
             na_rep="—")
-    .applymap(color_val, subset=["Move (%)","+ 1 day (%)","+ 5 days (%)","+ 20 days (%)"]))
+    .map(color_val, subset=["Move (%)","+ 1 day (%)","+ 5 days (%)","+ 20 days (%)"]))
 st.dataframe(styled, use_container_width=True, height=400)
 st.markdown("---")
 
