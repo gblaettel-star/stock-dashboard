@@ -15,7 +15,9 @@ st.markdown("""
 <style>
   html, body, [class*="css"] { font-size: 18px !important; }
   h1  { font-size: 2.4rem !important; margin-bottom: 0.2rem !important; }
-  h2  { font-size: 1.8rem !important; margin-top: 1.5rem !important; }
+  h2  { font-size: 1.5rem !important; margin-top: 1.8rem !important;
+        padding-bottom: 6px !important; border-bottom: 2px solid #1a56db !important;
+        color: #1a56db !important; }
   [data-testid="metric-container"] > div:nth-child(2)
       { font-size: 2rem !important; font-weight: 700; }
   .stDataFrame td, .stDataFrame th { font-size: 1rem !important; }
@@ -26,6 +28,8 @@ st.markdown("""
   .insight-warn { background:#fff4f0; border-left:5px solid #cc3300; }
   .insight-ok   { background:#f0fff4; border-left:5px solid #1aaa55; }
   .insight-neu  { background:#f8f8f8; border-left:5px solid #999; }
+  /* bigger ticker input */
+  [data-testid="stTextInput"] input { font-size: 1.4rem !important; font-weight: 700 !important; padding: 10px 14px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -45,12 +49,16 @@ def insight(text, kind="neu"):
     st.markdown(f"<div class='insight insight-{kind}'>{text}</div>",
                 unsafe_allow_html=True)
 
-# ── sidebar ────────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.title("⚙️  Settings")
-    ticker = st.text_input("Ticker", value="AAOI").upper().strip()
-    thr    = st.slider("'Big move' threshold (%)", 3, 15, 5)
-    st.caption("Data via Yahoo Finance · last 12 months")
+# ── top controls ───────────────────────────────────────────────────────────────
+_tc1, _tc2, _tc3 = st.columns([5, 1, 1])
+with _tc1:
+    ticker = st.text_input("", value="AAOI",
+                           placeholder="🔍  Enter ticker symbol  (e.g. AAOI · BE · TSLA · NVDA)",
+                           label_visibility="collapsed").upper().strip()
+with _tc3:
+    with st.expander("⚙️ Settings"):
+        thr = st.slider("'Big move' threshold (%)", 3, 15, 5)
+        st.caption("Data via Yahoo Finance · last 12 months")
 
 # ── fetch ──────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
@@ -219,7 +227,16 @@ def est_series(est_df, row_key="avg"):
 # ══════════════════════════════════════════════════════════════════════════════
 name = info.get("longName") or info.get("shortName") or ticker
 st.title(f"📈  {name}  ({ticker})")
-st.caption(f"Data as of {latest_date}")
+_price_col = UP_COL if latest_ret >= 0 else DOWN_COL
+st.markdown(
+    f"<div style='margin-top:-10px; margin-bottom:14px;'>"
+    f"<span style='font-size:2.2rem; font-weight:800; color:{FONT_COL};'>${current_price:.2f}</span>"
+    f"&nbsp;&nbsp;"
+    f"<span style='font-size:1.5rem; font-weight:700; color:{_price_col};'>"
+    f"{'▲' if latest_ret>=0 else '▼'} {latest_ret:+.1f}% today</span>"
+    f"&nbsp;&nbsp;<span style='font-size:1rem; color:#888;'>as of {latest_date}</span>"
+    f"</div>",
+    unsafe_allow_html=True)
 st.markdown("---")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -409,20 +426,30 @@ for emoji, text, positive in points:
 st.markdown("---")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# UP / DOWN PIE
+# UP / DOWN BAR
 # ══════════════════════════════════════════════════════════════════════════════
 st.subheader("Up days vs Down days")
-fig_pie = go.Figure(go.Pie(
-    labels=[f"Up  ({up_days})", f"Down  ({down_days})", f"Flat  ({flat_days})"],
-    values=[up_days, down_days, flat_days],
-    marker_colors=[UP_COL, DOWN_COL, "#aaaaaa"],
-    hole=0.4, textinfo="label+percent", textfont=dict(size=17),
-    hovertemplate="%{label}<extra></extra>",
-))
-fig_pie.update_layout(height=380, margin=dict(l=40,r=40,t=20,b=20),
-                      paper_bgcolor=PAPER_BG, font=dict(color=FONT_COL,size=16),
-                      showlegend=False)
-st.plotly_chart(fig_pie, use_container_width=True)
+_up_pct   = up_days   / total * 100
+_flat_pct = flat_days / total * 100
+_dn_pct   = down_days / total * 100
+st.markdown(
+    f"<div style='display:flex; height:38px; border-radius:8px; overflow:hidden; margin:12px 0 6px 0;'>"
+    f"  <div style='width:{_up_pct:.1f}%; background:{UP_COL}; display:flex; align-items:center;"
+    f"              justify-content:center; color:white; font-weight:700; font-size:1rem;'>"
+    f"    {'▲ ' + str(up_days) if _up_pct > 8 else ''}</div>"
+    f"  <div style='width:{_flat_pct:.1f}%; background:#aaaaaa; display:flex; align-items:center;"
+    f"              justify-content:center; color:white; font-size:0.9rem;'>"
+    f"    {'— ' + str(flat_days) if _flat_pct > 5 else ''}</div>"
+    f"  <div style='width:{_dn_pct:.1f}%; background:{DOWN_COL}; display:flex; align-items:center;"
+    f"              justify-content:center; color:white; font-weight:700; font-size:1rem;'>"
+    f"    {'▼ ' + str(down_days) if _dn_pct > 8 else ''}</div>"
+    f"</div>"
+    f"<div style='display:flex; justify-content:space-between; font-size:1rem; color:#444; margin-top:6px;'>"
+    f"  <span><b style='color:{UP_COL}'>▲ Up</b>&nbsp; {up_days} days &nbsp;({_up_pct:.0f}%)</span>"
+    f"  <span><b style='color:#888'>— Flat</b>&nbsp; {flat_days} days &nbsp;({_flat_pct:.0f}%)</span>"
+    f"  <span><b style='color:{DOWN_COL}'>▼ Down</b>&nbsp; {down_days} days &nbsp;({_dn_pct:.0f}%)</span>"
+    f"</div>",
+    unsafe_allow_html=True)
 st.markdown("---")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -685,34 +712,53 @@ else:
         colors = [UP_COL if m >= 0 else DOWN_COL for m in mids]
 
         n_tot_hist = len(outcomes_30)
-        bar_labels = [
-            f"<b>{c/n_tot_hist*100:.0f}%</b><br><span style='font-size:11px'>{c} drop{'s' if c!=1 else ''}</span>"
-            if c > 0 else "" for c in counts
-        ]
 
         fig_hist30 = go.Figure(go.Bar(
             x=mids, y=counts,
             marker_color=colors, marker_line_width=0.5, marker_line_color="white",
             width=bin_w * 0.85,
-            text=[f"{c/n_tot_hist*100:.0f}%<br>{c} drop{'s' if c!=1 else ''}" if c > 0 else ""
-                  for c in counts],
-            textposition="outside",
-            textfont=dict(size=15, color=FONT_COL),
             cliponaxis=False,
             hovertemplate="%{y} drop(s) ended around %{x:.0f}%<extra></extra>",
         ))
+
+        # add three-level annotations per bar:
+        #   1. outcome % (the x position) — largest, bold, colored
+        #   2. frequency % (share of drops) — medium
+        #   3. count ("N drops") — small grey
+        _annotations = []
+        _ymax = max(counts) * 1.65
+        _step = _ymax * 0.10
+        for _mid, _cnt, _col in zip(mids, counts, colors):
+            if _cnt > 0:
+                _outcome_txt   = f"<b>{_mid:+.0f}%</b>"
+                _freq_txt      = f"<b>{_cnt/n_tot_hist*100:.0f}%</b> of drops"
+                _cnt_txt       = f"{_cnt} drop{'s' if _cnt!=1 else ''}"
+                _ypos = _cnt + _ymax * 0.03
+                _annotations.append(dict(x=_mid, y=_ypos,
+                    text=_outcome_txt,
+                    font=dict(size=22, color=_col), showarrow=False,
+                    xanchor="center", yanchor="bottom"))
+                _annotations.append(dict(x=_mid, y=_ypos + _step,
+                    text=_freq_txt,
+                    font=dict(size=14, color=FONT_COL), showarrow=False,
+                    xanchor="center", yanchor="bottom"))
+                _annotations.append(dict(x=_mid, y=_ypos + _step * 2,
+                    text=_cnt_txt,
+                    font=dict(size=11, color="#888"), showarrow=False,
+                    xanchor="center", yanchor="bottom"))
         fig_hist30.add_vline(x=0, line_color="#333", line_dash="dash", line_width=2,
                              annotation_text=" Break-even", annotation_font_size=13)
         avg_30 = np.mean(outcomes_30)
         fig_hist30.add_vline(x=avg_30, line_color="#e6a817", line_dash="dot", line_width=2,
                              annotation_text=f" Avg: {avg_30:+.1f}%",
                              annotation_font_color="#b07a00", annotation_font_size=13)
-        fig_hist30.update_layout(**BASE_LAYOUT, height=420,
+        fig_hist30.update_layout(**BASE_LAYOUT, height=460,
             xaxis=dict(**AXIS, title="Price change 30 days after the drop (%)", ticksuffix="%",
                        title_font=dict(size=14)),
             yaxis=dict(**AXIS, title="Number of drops", title_font=dict(size=14),
-                       dtick=1, range=[0, max(counts) * 1.4]),
+                       dtick=1, range=[0, max(counts) * 1.65]),
             showlegend=False,
+            annotations=_annotations,
         )
         fig_hist30.update_layout(margin=dict(l=10, r=10, t=50, b=10))
         st.plotly_chart(fig_hist30, use_container_width=True)
