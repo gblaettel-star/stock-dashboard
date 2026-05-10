@@ -1,0 +1,75 @@
+{
+  "groups": [
+    {
+      "name": "Semiconductors",
+      "stocks": [
+        {"ticker": "ALAB", "weight": 3.72},
+        {"ticker": "AMD",  "weight": 4.24},
+        {"ticker": "ICHR", "weight": 0.69},
+        {"ticker": "MRVL", "weight": 0.40},
+        {"ticker": "MU",   "weight": 10.34},
+        {"ticker": "NVDA", "weight": 0.25},
+        {"ticker": "SNDK", "weight": 8.18},
+        {"ticker": "SOXX", "weight": 5.15},
+        {"ticker": "TTMI", "weight": 1.81}
+      ]
+    },
+    {
+      "name": "Optical & Networking",
+      "stocks": [
+        {"ticker": "AAOI", "weight": 8.84},
+        {"ticker": "CIEN", "weight": 5.04},
+        {"ticker": "COHR", "weight": 3.24},
+        {"ticker": "FN",   "weight": 0.51},
+        {"ticker": "LITE", "weight": 4.52},
+        {"ticker": "VIAV", "weight": 0.89}
+      ]
+    },
+    {
+      "name": "AI & Data Center",
+      "stocks": [
+        {"ticker": "DELL", "weight": 0.91},
+        {"ticker": "GEV",  "weight": 5.21},
+        {"ticker": "VRT",  "weight": 0.79}
+      ]
+    },
+    {
+      "name": "Clean Energy",
+      "stocks": [
+        {"ticker": "BE",  "weight": 8.90},
+        {"ticker": "NEE", "weight": 2.71}
+      ]
+    },
+    {
+      "name": "Big Tech",
+      "stocks": [
+        {"ticker": "GOOG", "weight": 3.23},
+        {"ticker": "META", "weight": 0.21},
+        {"ticker": "QQQ",  "weight": 0.33},
+        {"ticker": "XLK",  "weight": 1.80}
+      ]
+    },
+    {
+      "name": "Industrial & Construction",
+      "stocks": [
+        {"ticker": "AGX",  "weight": 1.42},
+        {"ticker": "ATI",  "weight": 0.87},
+        {"ticker": "CSTM", "weight": 1.18},
+        {"ticker": "FIX",  "weight": 2.73},
+        {"ticker": "STRL", "weight": 1.47}
+      ]
+    },
+    {
+      "name": "Other",
+      "stocks": [
+        {"ticker": "CASH", "weight": 6.52},
+        {"ticker": "EIS",  "weight": 0.80},
+        {"ticker": "EZPW", "weight": 0.86},
+        {"ticker": "IBKR", "weight": 0.29},
+        {"ticker": "NEXA", "weight": 0.67},
+        {"ticker": "UNFI", "weight": 0.85},
+        {"ticker": "VISN", "weight": 0.41}
+      ]
+    }
+  ]
+}
