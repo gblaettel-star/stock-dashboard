@@ -89,6 +89,24 @@ def remove_stock(data, ticker):
         g["stocks"] = [s for s in g["stocks"] if s["ticker"] != ticker]
     save_watchlist(data)
 
+def move_stock(data, ticker, new_group_name):
+    stock_entry = None
+    for g in data["groups"]:
+        match = [s for s in g["stocks"] if s["ticker"] == ticker]
+        if match:
+            stock_entry = match[0]
+            g["stocks"] = [s for s in g["stocks"] if s["ticker"] != ticker]
+            break
+    if stock_entry is None:
+        return
+    for g in data["groups"]:
+        if g["name"] == new_group_name:
+            g["stocks"].append(stock_entry)
+            break
+    else:
+        data["groups"].append({"name": new_group_name, "stocks": [stock_entry]})
+    save_watchlist(data)
+
 
 # ── paste parser ───────────────────────────────────────────────────────────────
 def parse_weight(val):
@@ -438,8 +456,28 @@ with st.expander("📋 Paste portfolio (replaces current watchlist)", expanded=F
                 st.session_state.upload_preview = None
                 st.rerun()
 
-# ── add stock form (edit mode only) ───────────────────────────────────────────
+# ── edit mode forms ────────────────────────────────────────────────────────────
 if st.session_state.edit_mode:
+    with st.expander("🗂️ Create new group", expanded=False):
+        ng1, ng2 = st.columns([4, 1])
+        with ng1:
+            new_group_name = st.text_input("Group name", placeholder="e.g. Biotech",
+                                           key="new_group_input").strip()
+        with ng2:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+            if st.button("Create", key="create_group_btn", type="primary"):
+                if not new_group_name:
+                    st.warning("Enter a group name first.")
+                elif new_group_name in [g["name"] for g in wl_data["groups"]]:
+                    st.warning(f"'{new_group_name}' already exists.")
+                else:
+                    wl_data["groups"].append({"name": new_group_name, "stocks": []})
+                    save_watchlist(wl_data)
+                    tg_data["group_order"].append(new_group_name)
+                    save_ticker_groups(tg_data)
+                    st.success(f"Group '{new_group_name}' created.")
+                    st.rerun()
+
     with st.expander("➕ Add a stock", expanded=True):
         ac1, ac2, ac3, ac4 = st.columns([2, 2, 2, 1])
         with ac1:
@@ -466,12 +504,19 @@ if st.session_state.edit_mode:
                 else:
                     st.warning("Enter a ticker first.")
 
-# ── column header row ──────────────────────────────────────────────────────────
+# ── column layout ─────────────────────────────────────────────────────────────
+def col_widths():
+    if st.session_state.edit_mode:
+        return [2, 3, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 2.0, 0.8]
+    return [2, 3, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8]
+
 def col_header():
-    h = st.columns([2, 3, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
-    labels = ["Ticker", "Company", "Weight", "Price", "Today", "5 Days", "YTD",
-              "52w Range", ""]
-    for col, lbl in zip(h, labels):
+    labels = ["Ticker", "Company", "Weight", "Price", "Today", "5 Days", "YTD", "52w Range"]
+    if st.session_state.edit_mode:
+        labels += ["Move to group", ""]
+    else:
+        labels += [""]
+    for col, lbl in zip(st.columns(col_widths()), labels):
         col.markdown(f"<div class='wl-header'>{lbl}</div>", unsafe_allow_html=True)
 
 
@@ -505,10 +550,11 @@ for group in wl_data["groups"]:
     col_header()
 
     for stock in stocks:
-        sym    = stock["ticker"]
-        weight = stock.get("weight", 0.0)
-        summary = load_summary(sym)
-        cols    = st.columns([2, 3, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
+        sym        = stock["ticker"]
+        weight     = stock.get("weight", 0.0)
+        cur_group  = group["name"]
+        summary    = load_summary(sym)
+        cols       = st.columns(col_widths())
 
         with cols[0]:
             if st.button(sym, key=f"btn_{sym}", help=f"Open {sym} detail"):
@@ -552,12 +598,25 @@ for group in wl_data["groups"]:
             for c in cols[3:8]:
                 c.markdown("<div class='wl-row wl-neutral'>—</div>", unsafe_allow_html=True)
 
-        with cols[8]:
-            if st.session_state.edit_mode:
+        if st.session_state.edit_mode:
+            with cols[8]:
+                new_group = st.selectbox(
+                    "", group_names,
+                    index=group_names.index(cur_group) if cur_group in group_names else 0,
+                    key=f"grp_{sym}",
+                    label_visibility="collapsed")
+                if new_group != cur_group:
+                    move_stock(wl_data, sym, new_group)
+                    tg_data["tickers"][sym] = new_group
+                    save_ticker_groups(tg_data)
+                    st.rerun()
+            with cols[9]:
                 if st.button("🗑️", key=f"del_{sym}", help=f"Remove {sym}"):
                     remove_stock(wl_data, sym)
                     st.cache_data.clear()
                     st.rerun()
+        else:
+            cols[8].markdown("", unsafe_allow_html=True)
 
 st.markdown("---")
 st.caption("Data via Yahoo Finance · Prices delayed ~15 min · Not financial advice")
