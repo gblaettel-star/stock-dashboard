@@ -79,6 +79,7 @@ def _rsi(close, period=14):
 def load(sym):
     t    = yf.Ticker(sym)
     info = t.info or {}
+    time.sleep(0.4)
 
     end   = datetime.today()
     start = end - timedelta(days=548)
@@ -89,11 +90,13 @@ def load(sym):
     hist["MA50"]   = hist["Close"].rolling(50).mean()
     hist["MA200"]  = hist["Close"].rolling(200).mean()
     hist["RSI"]    = _rsi(hist["Close"])
+    time.sleep(0.4)
 
     spy = yf.Ticker("SPY").history(start=start.strftime("%Y-%m-%d"),
                                     end=end.strftime("%Y-%m-%d"))
     if isinstance(spy.columns, pd.MultiIndex):
         spy.columns = spy.columns.get_level_values(0)
+    time.sleep(0.4)
 
     try:
         fin = t.financials
@@ -101,11 +104,13 @@ def load(sym):
             fin = t.income_stmt
     except Exception:
         fin = pd.DataFrame()
+    time.sleep(0.4)
 
     try:    rev_est  = t.revenue_estimate
     except: rev_est  = pd.DataFrame()
     try:    earn_est = t.earnings_estimate
     except: earn_est = pd.DataFrame()
+    time.sleep(0.4)
 
     try:    news = t.news or []
     except: news = []
@@ -118,6 +123,7 @@ def load(sym):
 
     try:    insiders = t.insider_transactions
     except: insiders = pd.DataFrame()
+    time.sleep(0.4)
 
     sector_etf_map = {
         "Technology": "XLK", "Healthcare": "XLV", "Energy": "XLE",
@@ -297,8 +303,7 @@ def render(ticker, thr=5):
             except Exception as e:
                 last_err = e
                 if _is_rate_limit(e) and attempt < 2:
-                    time.sleep(5 * (attempt + 1))   # 5s, then 10s
-                    load.clear()                     # force re-fetch next attempt
+                    time.sleep(8 * (attempt + 1))   # 8s, then 16s
                 else:
                     break
         if data is None:
