@@ -222,7 +222,7 @@ if st.session_state.selected_ticker:
         with st.expander("⚙️ Settings"):
             st.session_state.thr = st.slider(
                 "'Big move' threshold (%)", 3, 15, st.session_state.thr, key="detail_thr")
-            st.caption("Data via Yahoo Finance · last 12 months")
+            st.caption("Data via Yahoo Finance · refreshes every 30 min")
 
     render(ticker, st.session_state.thr)
     st.stop()
@@ -239,7 +239,7 @@ group_names = [g["name"] for g in wl_data["groups"]]
 hdr_left, hdr_right = st.columns([7, 3])
 with hdr_left:
     st.markdown("<h1 style='margin-bottom:0'>📊 My Watchlist</h1>", unsafe_allow_html=True)
-    st.caption("Click any ticker to open the full analysis. Data refreshes every 5 minutes.")
+    st.caption("Click any ticker to open the full analysis. Data refreshes every 30 minutes.")
 with hdr_right:
     edit_label = "✅ Done editing" if st.session_state.edit_mode else "✏️ Edit watchlist"
     if st.button(edit_label, key="edit_toggle"):
