@@ -77,27 +77,70 @@ def _rsi(close, period=14):
 
 @st.cache_data(ttl=1800)
 def load(sym):
-    t    = yf.Ticker(sym)
-    info = t.info or {}
-    time.sleep(0.4)
-
     end   = datetime.today()
     start = end - timedelta(days=548)
-    hist  = t.history(start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
-    if isinstance(hist.columns, pd.MultiIndex):
-        hist.columns = hist.columns.get_level_values(0)
+    s_str = start.strftime("%Y-%m-%d")
+    e_str = end.strftime("%Y-%m-%d")
+
+    # ── 1 request: batch-download price data for ticker + SPY ─────────────────
+    dl_list = [sym, "SPY"] if sym != "SPY" else ["SPY"]
+    raw = yf.download(dl_list, start=s_str, end=e_str,
+                      progress=False, group_by="ticker", auto_adjust=True)
+    if raw.empty:
+        raise ValueError(f"No price data for {sym}")
+
+    def _extract(df, tkr):
+        if isinstance(df.columns, pd.MultiIndex):
+            lvl = df.columns.get_level_values(0)
+            return df[tkr].copy() if tkr in lvl else pd.DataFrame()
+        return df.copy()
+
+    hist = _extract(raw, sym)
+    spy  = _extract(raw, "SPY")
+
+    if hist.empty:
+        raise ValueError(f"No price data for {sym}")
+
     hist["Return"] = hist["Close"].pct_change() * 100
     hist["MA50"]   = hist["Close"].rolling(50).mean()
     hist["MA200"]  = hist["Close"].rolling(200).mean()
     hist["RSI"]    = _rsi(hist["Close"])
-    time.sleep(0.4)
+    time.sleep(0.5)
 
-    spy = yf.Ticker("SPY").history(start=start.strftime("%Y-%m-%d"),
-                                    end=end.strftime("%Y-%m-%d"))
-    if isinstance(spy.columns, pd.MultiIndex):
-        spy.columns = spy.columns.get_level_values(0)
-    time.sleep(0.4)
+    # ── 1 request: ticker metadata — degrade gracefully if rate-limited ────────
+    t    = yf.Ticker(sym)
+    info = {}
+    try:
+        info = t.info or {}
+    except Exception as e:
+        if not _is_rate_limit(e):
+            raise
+        # rate limited on info — continue with empty dict; chart still renders
+    time.sleep(0.5)
 
+    # ── 1 optional request: sector ETF ────────────────────────────────────────
+    sector_etf_map = {
+        "Technology": "XLK", "Healthcare": "XLV", "Energy": "XLE",
+        "Financial Services": "XLF", "Consumer Cyclical": "XLY",
+        "Consumer Defensive": "XLP", "Industrials": "XLI",
+        "Basic Materials": "XLB", "Real Estate": "XLRE",
+        "Utilities": "XLU", "Communication Services": "XLC",
+    }
+    sector_etf_sym = sector_etf_map.get(info.get("sector", ""))
+    sector_rets    = pd.Series(dtype=float)
+    try:
+        if sector_etf_sym:
+            s_raw = yf.download(sector_etf_sym, start=s_str, end=e_str,
+                                progress=False, auto_adjust=True)
+            if not s_raw.empty:
+                s_close = (s_raw["Close"] if "Close" in s_raw.columns
+                           else s_raw.xs("Close", level=0, axis=1).iloc[:, 0])
+                sector_rets = s_close.pct_change().dropna() * 100
+    except Exception:
+        pass
+    time.sleep(0.5)
+
+    # ── remaining calls: all optional, already wrapped ────────────────────────
     try:
         fin = t.financials
         if fin is None or fin.empty:
@@ -112,38 +155,14 @@ def load(sym):
     except: earn_est = pd.DataFrame()
     time.sleep(0.4)
 
-    try:    news = t.news or []
-    except: news = []
-
-    try:    cal = t.calendar
-    except: cal = None
-
-    try:    rec_sum = t.recommendations_summary
-    except: rec_sum = pd.DataFrame()
-
+    try:    news     = t.news or []
+    except: news     = []
+    try:    cal      = t.calendar
+    except: cal      = None
+    try:    rec_sum  = t.recommendations_summary
+    except: rec_sum  = pd.DataFrame()
     try:    insiders = t.insider_transactions
     except: insiders = pd.DataFrame()
-    time.sleep(0.4)
-
-    sector_etf_map = {
-        "Technology": "XLK", "Healthcare": "XLV", "Energy": "XLE",
-        "Financial Services": "XLF", "Consumer Cyclical": "XLY",
-        "Consumer Defensive": "XLP", "Industrials": "XLI",
-        "Basic Materials": "XLB", "Real Estate": "XLRE",
-        "Utilities": "XLU", "Communication Services": "XLC",
-    }
-    sector_etf_sym = sector_etf_map.get(info.get("sector", ""))
-    try:
-        if sector_etf_sym:
-            s_hist = yf.Ticker(sector_etf_sym).history(
-                start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
-            if isinstance(s_hist.columns, pd.MultiIndex):
-                s_hist.columns = s_hist.columns.get_level_values(0)
-            sector_rets = s_hist["Close"].pct_change().dropna() * 100
-        else:
-            sector_rets = pd.Series(dtype=float)
-    except Exception:
-        sector_rets = pd.Series(dtype=float)
 
     return (hist.dropna(subset=["Return"]), spy, info, fin, rev_est, earn_est,
             news, cal, rec_sum, insiders, sector_etf_sym, sector_rets)
@@ -303,11 +322,19 @@ def render(ticker, thr=5):
             except Exception as e:
                 last_err = e
                 if _is_rate_limit(e) and attempt < 2:
-                    time.sleep(8 * (attempt + 1))   # 8s, then 16s
+                    time.sleep(15 * (attempt + 1))  # 15s, then 30s
                 else:
                     break
         if data is None:
-            st.error(f"Could not load '{ticker}': {last_err}")
+            if _is_rate_limit(last_err):
+                st.warning(
+                    "⚠️ Yahoo Finance is temporarily rate-limiting this server. "
+                    "Wait 30–60 seconds and click Retry.")
+                if st.button("🔄 Retry", key=f"retry_{ticker}"):
+                    load.clear()
+                    st.rerun()
+            else:
+                st.error(f"Could not load '{ticker}': {last_err}")
             return
         (df_full, spy, info, fin, rev_est, earn_est,
          news, cal, rec_sum, insiders,
