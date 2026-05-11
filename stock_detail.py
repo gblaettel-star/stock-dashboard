@@ -11,20 +11,9 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 
 
-def _yf_ticker(sym, retries=3, delay=3):
-    """Return a yf.Ticker, retrying on rate-limit errors."""
-    for attempt in range(retries):
-        try:
-            t = yf.Ticker(sym)
-            # trigger a lightweight call to catch rate limit early
-            _ = t.fast_info
-            return t
-        except Exception as e:
-            if attempt < retries - 1 and "rate" in str(e).lower():
-                time.sleep(delay * (attempt + 1))
-            else:
-                raise
-    return yf.Ticker(sym)
+def _is_rate_limit(e):
+    msg = str(e).lower()
+    return "rate" in msg or "429" in msg or "too many" in msg
 
 # ── colour palette ─────────────────────────────────────────────────────────────
 PLOT_BG   = "#f8f9ff"
@@ -88,7 +77,7 @@ def _rsi(close, period=14):
 
 @st.cache_data(ttl=1800)
 def load(sym):
-    t    = _yf_ticker(sym)
+    t    = yf.Ticker(sym)
     info = t.info or {}
 
     end   = datetime.today()
@@ -158,7 +147,7 @@ def load(sym):
 def load_summary(sym):
     """Lightweight fetch for watchlist rows — price metrics only."""
     try:
-        t   = _yf_ticker(sym)
+        t   = yf.Ticker(sym)
         end = datetime.today()
         # fetch from Jan 1 of current year so we have YTD + at least 10 days
         start = datetime(end.year, 1, 1)
@@ -300,13 +289,24 @@ def render(ticker, thr=5):
     """Render the full stock detail dashboard for a given ticker."""
 
     with st.spinner(f"Loading {ticker}…"):
-        try:
-            (df_full, spy, info, fin, rev_est, earn_est,
-             news, cal, rec_sum, insiders,
-             sector_etf_sym, sector_rets) = load(ticker)
-        except Exception as e:
-            st.error(f"Could not load '{ticker}': {e}")
+        data, last_err = None, None
+        for attempt in range(3):
+            try:
+                data = load(ticker)
+                break
+            except Exception as e:
+                last_err = e
+                if _is_rate_limit(e) and attempt < 2:
+                    time.sleep(5 * (attempt + 1))   # 5s, then 10s
+                    load.clear()                     # force re-fetch next attempt
+                else:
+                    break
+        if data is None:
+            st.error(f"Could not load '{ticker}': {last_err}")
             return
+        (df_full, spy, info, fin, rev_est, earn_est,
+         news, cal, rec_sum, insiders,
+         sector_etf_sym, sector_rets) = data
 
     if df_full.empty:
         st.error(f"No price data for '{ticker}'.")
