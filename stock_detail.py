@@ -2,7 +2,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import time
-import requests_cache
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -10,18 +9,6 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
-
-# HTTP-level cache — reduces actual Yahoo requests dramatically.
-# Lives in /tmp so it persists across Streamlit reruns on the same server.
-_YF_SESSION = requests_cache.CachedSession(
-    "/tmp/yfinance_cache",
-    expire_after=1800,
-    backend="sqlite",
-)
-
-
-def _ticker(sym):
-    return yf.Ticker(sym, session=_YF_SESSION)
 
 
 def _is_rate_limit(e):
@@ -90,7 +77,7 @@ def _rsi(close, period=14):
 
 @st.cache_data(ttl=1800)
 def load(sym):
-    t    = _ticker(sym)
+    t    = yf.Ticker(sym)
     info = t.info or {}
 
     end   = datetime.today()
@@ -103,7 +90,7 @@ def load(sym):
     hist["MA200"]  = hist["Close"].rolling(200).mean()
     hist["RSI"]    = _rsi(hist["Close"])
 
-    spy = _ticker("SPY").history(start=start.strftime("%Y-%m-%d"),
+    spy = yf.Ticker("SPY").history(start=start.strftime("%Y-%m-%d"),
                                     end=end.strftime("%Y-%m-%d"))
     if isinstance(spy.columns, pd.MultiIndex):
         spy.columns = spy.columns.get_level_values(0)
@@ -142,7 +129,7 @@ def load(sym):
     sector_etf_sym = sector_etf_map.get(info.get("sector", ""))
     try:
         if sector_etf_sym:
-            s_hist = _ticker(sector_etf_sym).history(
+            s_hist = yf.Ticker(sector_etf_sym).history(
                 start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
             if isinstance(s_hist.columns, pd.MultiIndex):
                 s_hist.columns = s_hist.columns.get_level_values(0)
@@ -160,7 +147,7 @@ def load(sym):
 def load_summary(sym):
     """Lightweight fetch for watchlist rows — price metrics only."""
     try:
-        t   = _ticker(sym)
+        t   = yf.Ticker(sym)
         end = datetime.today()
         # fetch from Jan 1 of current year so we have YTD + at least 10 days
         start = datetime(end.year, 1, 1)
