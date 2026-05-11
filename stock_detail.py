@@ -77,8 +77,8 @@ def _rsi(close, period=14):
 
 @st.cache_data(ttl=1800)
 def load(sym):
-    end   = datetime.today()
-    start = end - timedelta(days=548)
+    end   = datetime.today() + timedelta(days=1)   # +1 so end is exclusive-safe
+    start = end - timedelta(days=549)
     s_str = start.strftime("%Y-%m-%d")
     e_str = end.strftime("%Y-%m-%d")
 
@@ -173,8 +173,7 @@ def load_summary(sym):
     """Lightweight fetch for watchlist rows — price metrics only."""
     try:
         t   = yf.Ticker(sym)
-        end = datetime.today()
-        # fetch from Jan 1 of current year so we have YTD + at least 10 days
+        end = datetime.today() + timedelta(days=1)   # +1 so end is exclusive-safe
         start = datetime(end.year, 1, 1)
         hist  = t.history(start=start.strftime("%Y-%m-%d"),
                           end=end.strftime("%Y-%m-%d"))
