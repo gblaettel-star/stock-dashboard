@@ -1,6 +1,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 
+import time
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -8,6 +9,22 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+
+
+def _yf_ticker(sym, retries=3, delay=3):
+    """Return a yf.Ticker, retrying on rate-limit errors."""
+    for attempt in range(retries):
+        try:
+            t = yf.Ticker(sym)
+            # trigger a lightweight call to catch rate limit early
+            _ = t.fast_info
+            return t
+        except Exception as e:
+            if attempt < retries - 1 and "rate" in str(e).lower():
+                time.sleep(delay * (attempt + 1))
+            else:
+                raise
+    return yf.Ticker(sym)
 
 # ── colour palette ─────────────────────────────────────────────────────────────
 PLOT_BG   = "#f8f9ff"
@@ -69,9 +86,9 @@ def _rsi(close, period=14):
     return 100 - (100 / (1 + rs))
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def load(sym):
-    t    = yf.Ticker(sym)
+    t    = _yf_ticker(sym)
     info = t.info or {}
 
     end   = datetime.today()
@@ -137,11 +154,11 @@ def load(sym):
             news, cal, rec_sum, insiders, sector_etf_sym, sector_rets)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def load_summary(sym):
     """Lightweight fetch for watchlist rows — price metrics only."""
     try:
-        t   = yf.Ticker(sym)
+        t   = _yf_ticker(sym)
         end = datetime.today()
         # fetch from Jan 1 of current year so we have YTD + at least 10 days
         start = datetime(end.year, 1, 1)
