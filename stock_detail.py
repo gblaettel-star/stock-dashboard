@@ -1,6 +1,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 
+import time
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -8,6 +9,11 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+
+
+def _is_rate_limit(e):
+    msg = str(e).lower()
+    return "rate" in msg or "429" in msg or "too many" in msg
 
 # ── colour palette ─────────────────────────────────────────────────────────────
 PLOT_BG   = "#f8f9ff"
@@ -69,50 +75,50 @@ def _rsi(close, period=14):
     return 100 - (100 / (1 + rs))
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def load(sym):
-    t    = yf.Ticker(sym)
-    info = t.info or {}
+    end   = datetime.today() + timedelta(days=1)   # +1 so end is exclusive-safe
+    start = end - timedelta(days=549)
+    s_str = start.strftime("%Y-%m-%d")
+    e_str = end.strftime("%Y-%m-%d")
 
-    end   = datetime.today()
-    start = end - timedelta(days=548)
-    hist  = t.history(start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
-    if isinstance(hist.columns, pd.MultiIndex):
-        hist.columns = hist.columns.get_level_values(0)
+    # ── 1 request: batch-download price data for ticker + SPY ─────────────────
+    dl_list = [sym, "SPY"] if sym != "SPY" else ["SPY"]
+    raw = yf.download(dl_list, start=s_str, end=e_str,
+                      progress=False, group_by="ticker", auto_adjust=True)
+    if raw.empty:
+        raise ValueError(f"No price data for {sym}")
+
+    def _extract(df, tkr):
+        if isinstance(df.columns, pd.MultiIndex):
+            lvl = df.columns.get_level_values(0)
+            return df[tkr].copy() if tkr in lvl else pd.DataFrame()
+        return df.copy()
+
+    hist = _extract(raw, sym)
+    spy  = _extract(raw, "SPY")
+
+    if hist.empty:
+        raise ValueError(f"No price data for {sym}")
+
     hist["Return"] = hist["Close"].pct_change() * 100
     hist["MA50"]   = hist["Close"].rolling(50).mean()
     hist["MA200"]  = hist["Close"].rolling(200).mean()
     hist["RSI"]    = _rsi(hist["Close"])
+    time.sleep(0.5)
 
-    spy = yf.Ticker("SPY").history(start=start.strftime("%Y-%m-%d"),
-                                    end=end.strftime("%Y-%m-%d"))
-    if isinstance(spy.columns, pd.MultiIndex):
-        spy.columns = spy.columns.get_level_values(0)
-
+    # ── 1 request: ticker metadata — degrade gracefully if rate-limited ────────
+    t    = yf.Ticker(sym)
+    info = {}
     try:
-        fin = t.financials
-        if fin is None or fin.empty:
-            fin = t.income_stmt
-    except Exception:
-        fin = pd.DataFrame()
+        info = t.info or {}
+    except Exception as e:
+        if not _is_rate_limit(e):
+            raise
+        # rate limited on info — continue with empty dict; chart still renders
+    time.sleep(0.5)
 
-    try:    rev_est  = t.revenue_estimate
-    except: rev_est  = pd.DataFrame()
-    try:    earn_est = t.earnings_estimate
-    except: earn_est = pd.DataFrame()
-
-    try:    news = t.news or []
-    except: news = []
-
-    try:    cal = t.calendar
-    except: cal = None
-
-    try:    rec_sum = t.recommendations_summary
-    except: rec_sum = pd.DataFrame()
-
-    try:    insiders = t.insider_transactions
-    except: insiders = pd.DataFrame()
-
+    # ── 1 optional request: sector ETF ────────────────────────────────────────
     sector_etf_map = {
         "Technology": "XLK", "Healthcare": "XLV", "Energy": "XLE",
         "Financial Services": "XLF", "Consumer Cyclical": "XLY",
@@ -121,30 +127,93 @@ def load(sym):
         "Utilities": "XLU", "Communication Services": "XLC",
     }
     sector_etf_sym = sector_etf_map.get(info.get("sector", ""))
+    sector_rets    = pd.Series(dtype=float)
     try:
         if sector_etf_sym:
-            s_hist = yf.Ticker(sector_etf_sym).history(
-                start=start.strftime("%Y-%m-%d"), end=end.strftime("%Y-%m-%d"))
-            if isinstance(s_hist.columns, pd.MultiIndex):
-                s_hist.columns = s_hist.columns.get_level_values(0)
-            sector_rets = s_hist["Close"].pct_change().dropna() * 100
-        else:
-            sector_rets = pd.Series(dtype=float)
+            s_raw = yf.download(sector_etf_sym, start=s_str, end=e_str,
+                                progress=False, auto_adjust=True)
+            if not s_raw.empty:
+                s_close = (s_raw["Close"] if "Close" in s_raw.columns
+                           else s_raw.xs("Close", level=0, axis=1).iloc[:, 0])
+                sector_rets = s_close.pct_change().dropna() * 100
     except Exception:
-        sector_rets = pd.Series(dtype=float)
+        pass
+    time.sleep(0.5)
+
+    # ── remaining calls: all optional, already wrapped ────────────────────────
+    try:
+        fin = t.financials
+        if fin is None or fin.empty:
+            fin = t.income_stmt
+    except Exception:
+        fin = pd.DataFrame()
+    time.sleep(0.4)
+
+    try:    rev_est  = t.revenue_estimate
+    except: rev_est  = pd.DataFrame()
+    try:    earn_est = t.earnings_estimate
+    except: earn_est = pd.DataFrame()
+    time.sleep(0.4)
+
+    try:    news     = t.news or []
+    except: news     = []
+    try:    cal      = t.calendar
+    except: cal      = None
+    try:    rec_sum  = t.recommendations_summary
+    except: rec_sum  = pd.DataFrame()
+    try:    insiders = t.insider_transactions
+    except: insiders = pd.DataFrame()
 
     return (hist.dropna(subset=["Return"]), spy, info, fin, rev_est, earn_est,
             news, cal, rec_sum, insiders, sector_etf_sym, sector_rets)
 
 
-@st.cache_data(ttl=300)
+def _lite_verdict(price, ma50, ma200, rsi, rec_mean, n_analysts):
+    """Fast Buy/Sell rating for watchlist rows.
+
+    Uses the same signal directions as the full detail-view assessment, but
+    only the cheap-to-fetch subset: long-term trend (200-day MA), the
+    golden/death cross (50-day vs 200-day MA), momentum (RSI) and the Wall
+    Street analyst consensus. Returns (verdict, color, score) or None when
+    there isn't enough data to form a view (e.g. a brand-new ticker)."""
+    score       = 0.0
+    have_signal = False
+
+    if ma200 is not None:
+        have_signal = True
+        score += 1.0 if price > ma200 else -1.0
+    if ma50 is not None and ma200 is not None:
+        score += 0.5 if ma50 > ma200 else -0.5
+    if rsi is not None:
+        if   rsi < 30:  score += 1.0
+        elif rsi > 70:  score -= 0.5
+        elif rsi >= 50: score += 0.3
+        else:           score -= 0.3
+    if rec_mean and n_analysts:
+        have_signal = True
+        if   rec_mean <= 2.0: score += 1.0
+        elif rec_mean <= 2.5: score += 0.5
+        elif rec_mean >= 4.0: score -= 1.0
+        elif rec_mean >= 3.5: score -= 0.5
+
+    if not have_signal:
+        return None
+    if   score >= 2.5:  return "STRONG BUY",  "#0a7a3a", score
+    elif score >= 1.0:  return "BUY",         "#1aaa55", score
+    elif score >= -0.5: return "HOLD",        "#888800", score
+    elif score >= -2.0: return "SELL",        "#cc6600", score
+    else:               return "STRONG SELL", "#cc3300", score
+
+
+@st.cache_data(ttl=1800)
 def load_summary(sym):
-    """Lightweight fetch for watchlist rows — price metrics only."""
+    """Lightweight fetch for watchlist rows — price metrics + a quick rating."""
     try:
         t   = yf.Ticker(sym)
-        end = datetime.today()
-        # fetch from Jan 1 of current year so we have YTD + at least 10 days
-        start = datetime(end.year, 1, 1)
+        end = datetime.today() + timedelta(days=1)   # +1 so end is exclusive-safe
+        # ~13 months of history so the 200-day MA, RSI and a true 52-week
+        # range are all available; YTD is still measured from Jan 1.
+        start = end - timedelta(days=400)
         hist  = t.history(start=start.strftime("%Y-%m-%d"),
                           end=end.strftime("%Y-%m-%d"))
         if isinstance(hist.columns, pd.MultiIndex):
@@ -152,37 +221,67 @@ def load_summary(sym):
         if hist.empty:
             return None
 
-        current_price = float(hist["Close"].iloc[-1])
-        prev_close    = float(hist["Close"].iloc[-2]) if len(hist) > 1 else current_price
+        close         = hist["Close"]
+        current_price = float(close.iloc[-1])
+        prev_close    = float(close.iloc[-2]) if len(close) > 1 else current_price
         today_pct     = (current_price / prev_close - 1) * 100
 
-        price_5d_ago  = float(hist["Close"].iloc[-6]) if len(hist) >= 6 else float(hist["Close"].iloc[0])
+        price_5d_ago  = float(close.iloc[-6]) if len(close) >= 6 else float(close.iloc[0])
         pct_5d        = (current_price / price_5d_ago - 1) * 100
 
-        ytd_pct       = (current_price / float(hist["Close"].iloc[0]) - 1) * 100
+        # YTD measured from the first trading day of the current calendar year
+        this_year     = close[hist.index.year == datetime.today().year]
+        ytd_base      = float(this_year.iloc[0]) if len(this_year) else float(close.iloc[0])
+        ytd_pct       = (current_price / ytd_base - 1) * 100
 
-        week52_high   = float(hist["High"].max())
-        week52_low    = float(hist["Low"].min())
+        # true 52-week range (last ~252 trading days)
+        win           = hist.tail(252)
+        week52_high   = float(win["High"].max())
+        week52_low    = float(win["Low"].min())
 
-        # company name — fast_info is quicker than full info
-        name = sym
-        beta = None
+        # technicals for the quick rating
+        ma50  = float(close.rolling(50).mean().iloc[-1])  if len(close) >= 50  else None
+        ma200 = float(close.rolling(200).mean().iloc[-1]) if len(close) >= 200 else None
+        rsi_s = _rsi(close).dropna()
+        rsi   = float(rsi_s.iloc[-1]) if len(rsi_s) else None
+
+        # company name + analyst consensus (one info call, reused for both)
+        name       = sym
+        beta       = None
+        rec_mean   = None
+        n_analysts = 0
         try:
             fi   = t.fast_info
             name = getattr(fi, "name", None) or sym
-            beta = t.info.get("beta")
+        except Exception:
+            pass
+        try:
+            info       = t.info
+            name       = info.get("shortName") or info.get("longName") or name
+            beta       = info.get("beta")
+            rec_mean   = info.get("recommendationMean")
+            n_analysts = info.get("numberOfAnalystOpinions", 0) or 0
         except Exception:
             pass
 
+        rating = _lite_verdict(current_price, ma50, ma200, rsi, rec_mean, n_analysts)
+
         return {
-            "name":         name,
-            "price":        current_price,
-            "today_pct":    today_pct,
-            "pct_5d":       pct_5d,
-            "ytd_pct":      ytd_pct,
-            "week52_high":  week52_high,
-            "week52_low":   week52_low,
-            "beta":         beta,
+            "name":          name,
+            "price":         current_price,
+            "today_pct":     today_pct,
+            "pct_5d":        pct_5d,
+            "ytd_pct":       ytd_pct,
+            "week52_high":   week52_high,
+            "week52_low":    week52_low,
+            "beta":          beta,
+            "ma200":         ma200,
+            "rsi":           rsi,
+            "rec_mean":      rec_mean,
+            "n_analysts":    n_analysts,
+            "verdict":       rating[0] if rating else None,
+            "verdict_color": rating[1] if rating else None,
+            "verdict_score": rating[2] if rating else None,
         }
     except Exception:
         return None
@@ -283,13 +382,31 @@ def render(ticker, thr=5):
     """Render the full stock detail dashboard for a given ticker."""
 
     with st.spinner(f"Loading {ticker}…"):
-        try:
-            (df_full, spy, info, fin, rev_est, earn_est,
-             news, cal, rec_sum, insiders,
-             sector_etf_sym, sector_rets) = load(ticker)
-        except Exception as e:
-            st.error(f"Could not load '{ticker}': {e}")
+        data, last_err = None, None
+        for attempt in range(3):
+            try:
+                data = load(ticker)
+                break
+            except Exception as e:
+                last_err = e
+                if _is_rate_limit(e) and attempt < 2:
+                    time.sleep(15 * (attempt + 1))  # 15s, then 30s
+                else:
+                    break
+        if data is None:
+            if _is_rate_limit(last_err):
+                st.warning(
+                    "⚠️ Yahoo Finance is temporarily rate-limiting this server. "
+                    "Wait 30–60 seconds and click Retry.")
+                if st.button("🔄 Retry", key=f"retry_{ticker}"):
+                    load.clear()
+                    st.rerun()
+            else:
+                st.error(f"Could not load '{ticker}': {last_err}")
             return
+        (df_full, spy, info, fin, rev_est, earn_est,
+         news, cal, rec_sum, insiders,
+         sector_etf_sym, sector_rets) = data
 
     if df_full.empty:
         st.error(f"No price data for '{ticker}'.")

@@ -36,6 +36,11 @@ st.markdown("""
   .wl-pct-up   { color: #1aaa55; font-weight: 700; }
   .wl-pct-down { color: #cc3300; font-weight: 700; }
   .wl-neutral  { color: #888; }
+  .wl-badge {
+    display: inline-block; color: #fff; font-weight: 700;
+    font-size: 0.72rem; letter-spacing: 0.5px;
+    padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+  }
   .group-title {
     font-size: 1.25rem; font-weight: 700; color: #1a56db;
     padding: 10px 0 4px 0;
@@ -87,6 +92,24 @@ def add_stock(data, ticker, group_name, weight=0.0):
 def remove_stock(data, ticker):
     for g in data["groups"]:
         g["stocks"] = [s for s in g["stocks"] if s["ticker"] != ticker]
+    save_watchlist(data)
+
+def move_stock(data, ticker, new_group_name):
+    stock_entry = None
+    for g in data["groups"]:
+        match = [s for s in g["stocks"] if s["ticker"] == ticker]
+        if match:
+            stock_entry = match[0]
+            g["stocks"] = [s for s in g["stocks"] if s["ticker"] != ticker]
+            break
+    if stock_entry is None:
+        return
+    for g in data["groups"]:
+        if g["name"] == new_group_name:
+            g["stocks"].append(stock_entry)
+            break
+    else:
+        data["groups"].append({"name": new_group_name, "stocks": [stock_entry]})
     save_watchlist(data)
 
 
@@ -204,7 +227,7 @@ if st.session_state.selected_ticker:
         with st.expander("⚙️ Settings"):
             st.session_state.thr = st.slider(
                 "'Big move' threshold (%)", 3, 15, st.session_state.thr, key="detail_thr")
-            st.caption("Data via Yahoo Finance · last 12 months")
+            st.caption("Data via Yahoo Finance · refreshes every 30 min")
 
     render(ticker, st.session_state.thr)
     st.stop()
@@ -221,7 +244,7 @@ group_names = [g["name"] for g in wl_data["groups"]]
 hdr_left, hdr_right = st.columns([7, 3])
 with hdr_left:
     st.markdown("<h1 style='margin-bottom:0'>📊 My Watchlist</h1>", unsafe_allow_html=True)
-    st.caption("Click any ticker to open the full analysis. Data refreshes every 5 minutes.")
+    st.caption("Click any ticker to open the full analysis. Data refreshes every 30 minutes.")
 with hdr_right:
     edit_label = "✅ Done editing" if st.session_state.edit_mode else "✏️ Edit watchlist"
     if st.button(edit_label, key="edit_toggle"):
@@ -438,8 +461,28 @@ with st.expander("📋 Paste portfolio (replaces current watchlist)", expanded=F
                 st.session_state.upload_preview = None
                 st.rerun()
 
-# ── add stock form (edit mode only) ───────────────────────────────────────────
+# ── edit mode forms ────────────────────────────────────────────────────────────
 if st.session_state.edit_mode:
+    with st.expander("🗂️ Create new group", expanded=False):
+        ng1, ng2 = st.columns([4, 1])
+        with ng1:
+            new_group_name = st.text_input("Group name", placeholder="e.g. Biotech",
+                                           key="new_group_input").strip()
+        with ng2:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+            if st.button("Create", key="create_group_btn", type="primary"):
+                if not new_group_name:
+                    st.warning("Enter a group name first.")
+                elif new_group_name in [g["name"] for g in wl_data["groups"]]:
+                    st.warning(f"'{new_group_name}' already exists.")
+                else:
+                    wl_data["groups"].append({"name": new_group_name, "stocks": []})
+                    save_watchlist(wl_data)
+                    tg_data["group_order"].append(new_group_name)
+                    save_ticker_groups(tg_data)
+                    st.success(f"Group '{new_group_name}' created.")
+                    st.rerun()
+
     with st.expander("➕ Add a stock", expanded=True):
         ac1, ac2, ac3, ac4 = st.columns([2, 2, 2, 1])
         with ac1:
@@ -466,13 +509,44 @@ if st.session_state.edit_mode:
                 else:
                     st.warning("Enter a ticker first.")
 
-# ── column header row ──────────────────────────────────────────────────────────
+# ── column layout ─────────────────────────────────────────────────────────────
+def col_widths():
+    if st.session_state.edit_mode:
+        return [1.8, 2.6, 1.5, 1.1, 1.1, 1.1, 1.1, 1.1, 1.2, 2.0, 0.8]
+    return [1.8, 2.6, 1.5, 1.1, 1.1, 1.1, 1.1, 1.1, 1.2, 0.8]
+
 def col_header():
-    h = st.columns([2, 3, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
-    labels = ["Ticker", "Company", "Weight", "Price", "Today", "5 Days", "YTD",
-              "52w Range", ""]
-    for col, lbl in zip(h, labels):
+    labels = ["Ticker", "Company", "Rating", "Weight", "Price", "Today", "5 Days", "YTD", "52w Range"]
+    if st.session_state.edit_mode:
+        labels += ["Move to group", ""]
+    else:
+        labels += [""]
+    for col, lbl in zip(st.columns(col_widths()), labels):
         col.markdown(f"<div class='wl-header'>{lbl}</div>", unsafe_allow_html=True)
+
+
+def rating_html(summary):
+    """Coloured Buy/Sell badge for a watchlist row."""
+    if not summary or not summary.get("verdict"):
+        return "<span class='wl-neutral'>—</span>"
+    verdict = summary["verdict"]
+    color   = summary["verdict_color"]
+    # plain-English tooltip (native title attr) explaining the call
+    bits = []
+    if summary.get("ma200") is not None:
+        trend = "above" if summary["price"] > summary["ma200"] else "below"
+        bits.append(f"price is {trend} its 200-day average")
+    if summary.get("rsi") is not None:
+        bits.append(f"RSI {summary['rsi']:.0f}")
+    if summary.get("rec_mean") and summary.get("n_analysts"):
+        bits.append(f"analyst consensus {summary['rec_mean']:.1f}/5 "
+                    f"({summary['n_analysts']} analysts)")
+    tip = ("Quick automated read from trend, momentum and analyst views — "
+           "not financial advice. " + "; ".join(bits)) if bits else \
+          "Quick automated read — not financial advice."
+    return (f"<div class='wl-row'>"
+            f"<span class='wl-badge' style='background:{color}' title=\"{tip}\">"
+            f"{verdict}</span></div>")
 
 
 def pct_html(val):
@@ -495,6 +569,32 @@ def range_bar_html(price, low, high):
     )
 
 
+# ── rating legend ──────────────────────────────────────────────────────────────
+with st.expander("ℹ️ What does the Rating column mean?", expanded=False):
+    st.markdown(
+        "The **Rating** is a quick, automated read on each stock — it is **not financial "
+        "advice**, just a starting point. It blends three simple signals:\n\n"
+        "- **Trend** — is the price above or below its 200-day average? (above = healthy uptrend)\n"
+        "- **Momentum (RSI)** — is the stock oversold (cheap) or overbought (stretched)?\n"
+        "- **Analyst consensus** — how Wall Street analysts rate it on a 1–5 scale.\n\n"
+        "These combine into one label:")
+    badges = [
+        ("STRONG BUY",  "#0a7a3a", "Signals strongly positive"),
+        ("BUY",         "#1aaa55", "More positive than negative"),
+        ("HOLD",        "#888800", "Mixed / neutral"),
+        ("SELL",        "#cc6600", "More negative than positive"),
+        ("STRONG SELL", "#cc3300", "Signals strongly negative"),
+    ]
+    st.markdown(
+        "".join(
+            f"<div style='margin:4px 0'>"
+            f"<span class='wl-badge' style='background:{c}'>{v}</span>"
+            f"<span style='color:#555;margin-left:10px'>{d}</span></div>"
+            for v, c, d in badges),
+        unsafe_allow_html=True)
+    st.caption("Hover any badge in the table to see the specific reasons behind it.")
+
+
 # ── render each group ──────────────────────────────────────────────────────────
 for group in wl_data["groups"]:
     stocks = group["stocks"]
@@ -505,10 +605,11 @@ for group in wl_data["groups"]:
     col_header()
 
     for stock in stocks:
-        sym    = stock["ticker"]
-        weight = stock.get("weight", 0.0)
-        summary = load_summary(sym)
-        cols    = st.columns([2, 3, 1.2, 1.2, 1.2, 1.2, 1.2, 1.2, 0.8])
+        sym        = stock["ticker"]
+        weight     = stock.get("weight", 0.0)
+        cur_group  = group["name"]
+        summary    = load_summary(sym)
+        cols       = st.columns(col_widths())
 
         with cols[0]:
             if st.button(sym, key=f"btn_{sym}", help=f"Open {sym} detail"):
@@ -521,6 +622,9 @@ for group in wl_data["groups"]:
                         unsafe_allow_html=True)
 
         with cols[2]:
+            st.markdown(rating_html(summary), unsafe_allow_html=True)
+
+        with cols[3]:
             st.markdown(f"<div class='wl-row wl-neutral'>{weight:.2f}%</div>",
                         unsafe_allow_html=True)
 
@@ -533,31 +637,44 @@ for group in wl_data["groups"]:
             w52_low   = summary["week52_low"]
             price_col = UP_COL if today_pct >= 0 else DOWN_COL
 
-            with cols[3]:
+            with cols[4]:
                 st.markdown(f"<div class='wl-row wl-price' style='color:{price_col}'>"
                             f"${price:.2f}</div>", unsafe_allow_html=True)
-            with cols[4]:
+            with cols[5]:
                 st.markdown(f"<div class='wl-row'>{pct_html(today_pct)}</div>",
                             unsafe_allow_html=True)
-            with cols[5]:
+            with cols[6]:
                 st.markdown(f"<div class='wl-row'>{pct_html(pct_5d)}</div>",
                             unsafe_allow_html=True)
-            with cols[6]:
+            with cols[7]:
                 st.markdown(f"<div class='wl-row'>{pct_html(ytd_pct)}</div>",
                             unsafe_allow_html=True)
-            with cols[7]:
+            with cols[8]:
                 st.markdown(f"<div class='wl-row'>{range_bar_html(price, w52_low, w52_high)}</div>",
                             unsafe_allow_html=True)
         else:
-            for c in cols[3:8]:
+            for c in cols[4:9]:
                 c.markdown("<div class='wl-row wl-neutral'>—</div>", unsafe_allow_html=True)
 
-        with cols[8]:
-            if st.session_state.edit_mode:
+        if st.session_state.edit_mode:
+            with cols[9]:
+                new_group = st.selectbox(
+                    "", group_names,
+                    index=group_names.index(cur_group) if cur_group in group_names else 0,
+                    key=f"grp_{sym}",
+                    label_visibility="collapsed")
+                if new_group != cur_group:
+                    move_stock(wl_data, sym, new_group)
+                    tg_data["tickers"][sym] = new_group
+                    save_ticker_groups(tg_data)
+                    st.rerun()
+            with cols[10]:
                 if st.button("🗑️", key=f"del_{sym}", help=f"Remove {sym}"):
                     remove_stock(wl_data, sym)
                     st.cache_data.clear()
                     st.rerun()
+        else:
+            cols[9].markdown("", unsafe_allow_html=True)
 
 st.markdown("---")
 st.caption("Data via Yahoo Finance · Prices delayed ~15 min · Not financial advice")
